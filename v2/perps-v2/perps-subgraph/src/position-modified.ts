@@ -1,5 +1,5 @@
 import { PositionModified as PositionModifiedEvent } from '../generated/PerpsV2ProxyAAVEPERP/PerpsV2Proxy';
-import { Address, BigDecimal, BigInt, log, store } from '@graphprotocol/graph-ts';
+import { BigDecimal, BigInt, log } from '@graphprotocol/graph-ts';
 
 import {
   Trader,
@@ -9,6 +9,10 @@ import {
   FundingRateUpdate,
   FuturesMarginTransfer,
 } from '../generated/schema';
+import {
+  createTradeEntityForNewPosition,
+  createTradeEntityForPositionClosed,
+} from './trade-entities';
 
 function getOrCreateTrader(event: PositionModifiedEvent): Trader {
   let trader = Trader.load(event.params.account.toHex());
@@ -84,37 +88,13 @@ function createFuturesPosition(event: PositionModifiedEvent, positionId: string)
   return futuresPosition;
 }
 
-function createTradeEntityForNewPosition(
-  event: PositionModifiedEvent,
-  positionId: string
-): FuturesTrade {
-  const tradeEntity = new FuturesTrade(
-    event.transaction.hash.toHex() + '-' + event.logIndex.toString()
-  );
-  tradeEntity.timestamp = event.block.timestamp;
-  tradeEntity.account = event.params.account;
-  tradeEntity.positionId = positionId;
-  tradeEntity.margin = event.params.margin.plus(event.params.fee);
-  tradeEntity.size = event.params.tradeSize;
-  tradeEntity.positionSize = event.params.size;
-  tradeEntity.market = event.address.toHex();
-  tradeEntity.price = event.params.lastPrice;
-  tradeEntity.pnl = event.params.fee.times(BigInt.fromI32(-1));
-  tradeEntity.feesPaidToSynthetix = event.params.fee;
-  tradeEntity.positionClosed = false;
-  tradeEntity.type = 'PositionOpened';
-  tradeEntity.txHash = event.transaction.hash.toHex();
-  return tradeEntity;
-}
-
 function handlePositionOpenUpdates(
   event: PositionModifiedEvent,
   synthetix: Synthetix,
   trader: Trader,
   positionId: string
 ): void {
-  const tradeEntity = createTradeEntityForNewPosition(event, positionId);
-  tradeEntity.save();
+  createTradeEntityForNewPosition(event, positionId);
   synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
     event.params.fee.toBigDecimal()
   );
@@ -158,6 +138,7 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
         .minus(futuresPosition.avgEntryPrice)
         .times(futuresPosition.size)
         .div(BigInt.fromI32(10).pow(18));
+      createTradeEntityForPositionClosed(event, positionId, newPnl);
 
       futuresPosition.pnl = newPnl;
       futuresPosition.isOpen = false;
@@ -176,24 +157,6 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
         .div(event.params.margin)
         .abs();
 
-      const tradeEntity = new FuturesTrade(
-        event.transaction.hash.toHex() + '-' + event.logIndex.toString()
-      );
-
-      tradeEntity.timestamp = event.block.timestamp;
-      tradeEntity.account = event.params.account;
-      tradeEntity.positionId = positionId;
-      tradeEntity.margin = event.params.margin.plus(event.params.fee);
-      tradeEntity.size = event.params.tradeSize;
-      tradeEntity.market = event.address.toHex();
-      tradeEntity.price = event.params.lastPrice;
-      tradeEntity.positionSize = event.params.size;
-      tradeEntity.pnl = newPnl;
-      tradeEntity.feesPaidToSynthetix = event.params.fee;
-      tradeEntity.positionClosed = true;
-      tradeEntity.type = 'PositionClosed';
-      tradeEntity.txHash = event.transaction.hash.toHex();
-
       trader.pnl = trader.pnl.plus(newPnl);
       trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
 
@@ -207,7 +170,6 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
           .abs()
           .toBigDecimal()
       );
-      tradeEntity.save();
     }
     // If tradeSize and size are not zero, position got modified
     else if (!event.params.tradeSize.isZero() && !event.params.size.isZero()) {
