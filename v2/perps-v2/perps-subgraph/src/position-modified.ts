@@ -1,6 +1,5 @@
 import { PositionModified as PositionModifiedEvent } from '../generated/PerpsV2ProxyAAVEPERP/PerpsV2Proxy';
 import { BigDecimal, BigInt, log } from '@graphprotocol/graph-ts';
-
 import {
   Trader,
   Synthetix,
@@ -112,6 +111,50 @@ function handlePositionOpenUpdates(
   trader.pnl = trader.pnl.plus(event.params.fee.times(BigInt.fromI32(-1)));
 }
 
+function handlePositionClosedUpdates(
+  event: PositionModifiedEvent,
+  futuresPosition: FuturesPosition,
+  synthetix: Synthetix,
+  trader: Trader
+): void {
+  const newPnl = event.params.lastPrice
+    .minus(futuresPosition.avgEntryPrice)
+    .times(futuresPosition.size)
+    .div(BigInt.fromI32(10).pow(18));
+  createTradeEntityForPositionClosed(event, futuresPosition.id, newPnl);
+
+  futuresPosition.pnl = newPnl;
+  futuresPosition.isOpen = false;
+  futuresPosition.exitPrice = event.params.lastPrice;
+  futuresPosition.closeTimestamp = event.block.timestamp;
+  futuresPosition.feesPaidToSynthetix = futuresPosition.feesPaidToSynthetix
+    .plus(event.params.fee)
+    .minus(futuresPosition.netFunding);
+  futuresPosition.margin = event.params.margin;
+  futuresPosition.size = event.params.size;
+  futuresPosition.lastPrice = event.params.lastPrice;
+  futuresPosition.trades = futuresPosition.trades.plus(BigInt.fromI32(1));
+  futuresPosition.long = !event.params.tradeSize.gt(BigInt.fromI32(0));
+  futuresPosition.leverage = event.params.tradeSize
+    .times(event.params.lastPrice)
+    .div(event.params.margin)
+    .abs();
+
+  trader.pnl = trader.pnl.plus(newPnl);
+  trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
+
+  synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
+    event.params.fee.toBigDecimal()
+  );
+  synthetix.totalVolume = synthetix.totalVolume.plus(
+    event.params.tradeSize
+      .times(event.params.lastPrice)
+      .div(BigInt.fromI32(10).pow(18))
+      .abs()
+      .toBigDecimal()
+  );
+}
+
 /**
  * Entrypoint
  */
@@ -133,43 +176,7 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
     // Position closed & not liquidated
     if (event.params.size.isZero() && !event.params.tradeSize.isZero()) {
       log.info('position closed', [positionId]);
-
-      const newPnl = event.params.lastPrice
-        .minus(futuresPosition.avgEntryPrice)
-        .times(futuresPosition.size)
-        .div(BigInt.fromI32(10).pow(18));
-      createTradeEntityForPositionClosed(event, positionId, newPnl);
-
-      futuresPosition.pnl = newPnl;
-      futuresPosition.isOpen = false;
-      futuresPosition.exitPrice = event.params.lastPrice;
-      futuresPosition.closeTimestamp = event.block.timestamp;
-      futuresPosition.feesPaidToSynthetix = futuresPosition.feesPaidToSynthetix
-        .plus(event.params.fee)
-        .minus(futuresPosition.netFunding);
-      futuresPosition.margin = event.params.margin;
-      futuresPosition.size = event.params.size;
-      futuresPosition.lastPrice = event.params.lastPrice;
-      futuresPosition.trades = futuresPosition.trades.plus(BigInt.fromI32(1));
-      futuresPosition.long = !event.params.tradeSize.gt(BigInt.fromI32(0));
-      futuresPosition.leverage = event.params.tradeSize
-        .times(event.params.lastPrice)
-        .div(event.params.margin)
-        .abs();
-
-      trader.pnl = trader.pnl.plus(newPnl);
-      trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
-
-      synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
-        event.params.fee.toBigDecimal()
-      );
-      synthetix.totalVolume = synthetix.totalVolume.plus(
-        event.params.tradeSize
-          .times(event.params.lastPrice)
-          .div(BigInt.fromI32(10).pow(18))
-          .abs()
-          .toBigDecimal()
-      );
+      handlePositionClosedUpdates(event, futuresPosition, synthetix, trader);
     }
     // If tradeSize and size are not zero, position got modified
     else if (!event.params.tradeSize.isZero() && !event.params.size.isZero()) {
