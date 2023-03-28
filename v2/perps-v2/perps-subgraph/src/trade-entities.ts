@@ -51,3 +51,23 @@ export function createTradeEntityForPositionModification(
   tradeEntity.type = 'PositionModified';
   tradeEntity.save();
 }
+
+export function createTradeEntityForLiquidation(
+  event: PositionModifiedEvent,
+  positionId: string,
+  pnl: BigInt
+): void {
+  // temporarily set the pnl to the difference in the position pnl
+  // we will add liquidation fees during the PositionLiquidated handler
+  const tradeEntity = createBaseTradeEntity(event, positionId);
+  tradeEntity.margin = BigInt.fromI32(0);
+  tradeEntity.market = event.address.toHex();
+  tradeEntity.size = BigInt.fromI32(0);
+  tradeEntity.positionId = positionId;
+  tradeEntity.positionSize = BigInt.fromI32(0);
+  tradeEntity.positionClosed = true;
+  tradeEntity.pnl = pnl;
+  tradeEntity.type = 'Liquidated';
+
+  tradeEntity.save();
+}

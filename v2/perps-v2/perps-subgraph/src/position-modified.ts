@@ -4,11 +4,11 @@ import {
   Trader,
   Synthetix,
   FuturesPosition,
-  FuturesTrade,
   FundingRateUpdate,
   FuturesMarginTransfer,
 } from '../generated/schema';
 import {
+  createTradeEntityForLiquidation,
   createTradeEntityForNewPosition,
   createTradeEntityForPositionClosed,
   createTradeEntityForPositionModification,
@@ -288,28 +288,10 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
       .minus(futuresPosition.netFunding);
     const newTradePnl = newPositionPnl.minus(futuresPosition.pnl);
 
-    // temporarily set the pnl to the difference in the position pnl
-    // we will add liquidation fees during the PositionLiquidated handler
-    const tradeEntity = new FuturesTrade(
-      event.transaction.hash.toHex() + '-' + event.logIndex.toString()
-    );
-    tradeEntity.margin = BigInt.fromI32(0);
-    tradeEntity.timestamp = event.block.timestamp;
-    tradeEntity.account = event.params.account;
-    tradeEntity.market = event.address.toHex();
-    tradeEntity.size = BigInt.fromI32(0);
-    tradeEntity.price = event.params.lastPrice;
-    tradeEntity.positionId = positionId;
-    tradeEntity.positionSize = BigInt.fromI32(0);
-    tradeEntity.positionClosed = true;
-    tradeEntity.pnl = newTradePnl;
-    tradeEntity.feesPaidToSynthetix = event.params.fee;
-    tradeEntity.type = 'Liquidated';
-    tradeEntity.txHash = event.transaction.hash.toHex();
+    createTradeEntityForLiquidation(event, futuresPosition.id, newPositionPnlWithFeesPaid);
 
     futuresPosition.pnl = newPositionPnl;
-    trader.pnl = tradeEntity.pnl.plus(newTradePnl);
-    tradeEntity.save();
+    trader.pnl = trader.pnl.plus(newTradePnl);
   }
 
   // if there is an existing position...
