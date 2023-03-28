@@ -55,6 +55,20 @@ function updateTrades(event: PositionModifiedEvent, synthetix: Synthetix, trader
   oldTrades.push(event.transaction.hash.toHex() + '-' + event.logIndex.toString());
   trader.trades = oldTrades;
 }
+function updateVolume(
+  event: PositionModifiedEvent,
+  synthetix: Synthetix,
+  trader: Trader,
+  futuresPosition: FuturesPosition
+): void {
+  const volume = event.params.tradeSize
+    .times(event.params.lastPrice)
+    .div(BigInt.fromI32(10).pow(18))
+    .abs();
+  futuresPosition.totalVolume = futuresPosition.totalVolume.plus(volume);
+  synthetix.totalVolume = synthetix.totalVolume.plus(volume.toBigDecimal());
+  trader.totalVolume = trader.totalVolume.plus(volume.toBigDecimal());
+}
 
 function updateFunding(
   event: PositionModifiedEvent,
@@ -110,10 +124,7 @@ function createFuturesPosition(event: PositionModifiedEvent, positionId: string)
     .abs();
   futuresPosition.netFunding = BigInt.fromI32(0);
   futuresPosition.txHash = event.transaction.hash.toHex();
-  futuresPosition.totalVolume = event.params.tradeSize
-    .times(event.params.lastPrice)
-    .div(BigInt.fromI32(10).pow(18))
-    .abs();
+  futuresPosition.totalVolume = BigInt.fromI32(0); // volume gets updated for all cases with updateVolume
   return futuresPosition;
 }
 
@@ -128,14 +139,6 @@ function handlePositionOpenUpdates(
     event.params.fee.toBigDecimal()
   );
 
-  const volume = event.params.tradeSize
-    .times(event.params.lastPrice)
-    .div(BigInt.fromI32(10).pow(18))
-    .abs()
-    .toBigDecimal();
-
-  synthetix.totalVolume = synthetix.totalVolume.plus(volume);
-  trader.totalVolume = trader.totalVolume.plus(volume);
   trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
   trader.margin = trader.margin.plus(event.params.margin.toBigDecimal());
   trader.pnl = trader.pnl.plus(event.params.fee.times(BigInt.fromI32(-1)));
@@ -176,13 +179,6 @@ function handlePositionClosedUpdates(
   synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
     event.params.fee.toBigDecimal()
   );
-  synthetix.totalVolume = synthetix.totalVolume.plus(
-    event.params.tradeSize
-      .times(event.params.lastPrice)
-      .div(BigInt.fromI32(10).pow(18))
-      .abs()
-      .toBigDecimal()
-  );
 }
 
 function handleActualPositionModification(
@@ -207,15 +203,6 @@ function handleActualPositionModification(
   synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
     event.params.fee.toBigDecimal()
   );
-
-  const volume = event.params.tradeSize
-    .times(event.params.lastPrice)
-    .div(BigInt.fromI32(10).pow(18))
-    .abs();
-
-  trader.totalVolume = trader.totalVolume.plus(volume.toBigDecimal());
-  synthetix.totalVolume = synthetix.totalVolume.plus(volume.toBigDecimal());
-  futuresPosition.totalVolume = futuresPosition.totalVolume.plus(volume);
 
   // if position changes sides, reset the entry price
   if (
@@ -325,7 +312,7 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
 
   // if there is an existing position...
   updateFunding(event, futuresPosition, trader);
-
+  updateVolume(event, synthetix, trader, futuresPosition);
   futuresPosition.save();
   trader.save();
   synthetix.save();
