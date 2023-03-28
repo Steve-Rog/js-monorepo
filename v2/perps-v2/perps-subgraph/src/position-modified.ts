@@ -11,6 +11,7 @@ import {
 import {
   createTradeEntityForNewPosition,
   createTradeEntityForPositionClosed,
+  createTradeEntityForPositionModification,
 } from './trade-entities';
 
 function getOrCreateTrader(event: PositionModifiedEvent): Trader {
@@ -181,7 +182,6 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
     // If tradeSize and size are not zero, position got modified
     else if (!event.params.tradeSize.isZero() && !event.params.size.isZero()) {
       log.info('position modified', [positionId]);
-
       futuresPosition.feesPaidToSynthetix = futuresPosition.feesPaidToSynthetix.plus(
         event.params.fee
       );
@@ -195,23 +195,6 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
         .times(event.params.lastPrice)
         .div(futuresPosition.margin.plus(event.params.margin))
         .abs();
-
-      const tradeEntity = new FuturesTrade(
-        event.transaction.hash.toHex() + '-' + event.logIndex.toString()
-      );
-
-      tradeEntity.timestamp = event.block.timestamp;
-      tradeEntity.account = event.params.account;
-      tradeEntity.positionId = positionId;
-      tradeEntity.margin = event.params.margin.plus(event.params.fee);
-      tradeEntity.size = event.params.tradeSize;
-      tradeEntity.market = event.address.toHex();
-      tradeEntity.price = event.params.lastPrice;
-      tradeEntity.positionSize = event.params.size;
-      tradeEntity.feesPaidToSynthetix = event.params.fee;
-      tradeEntity.positionClosed = false;
-      tradeEntity.type = 'PositionModified';
-      tradeEntity.txHash = event.transaction.hash.toHex();
 
       trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
       synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
@@ -239,8 +222,9 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
           .div(BigInt.fromI32(10).pow(18));
 
         // add pnl to this position and the trader's overall stats
-        tradeEntity.pnl = newPnl;
-        trader.pnl = tradeEntity.pnl.plus(newPnl);
+        createTradeEntityForPositionModification(event, positionId, newPnl);
+
+        trader.pnl = trader.pnl.plus(newPnl);
         futuresPosition.pnl = futuresPosition.pnl.plus(newPnl);
 
         // Because we switched sides from long to short or short to long, we reset the entry price
@@ -266,12 +250,11 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
             .div(BigInt.fromI32(10).pow(18));
 
           // add pnl to this position and the trader's overall stats
-          tradeEntity.pnl = newPnl;
+          createTradeEntityForPositionModification(event, positionId, newPnl);
           trader.pnl = trader.pnl.plus(newPnl);
           futuresPosition.pnl = futuresPosition.pnl.plus(newPnl);
         }
       }
-      tradeEntity.save();
     } else {
       log.debug('Transferred Margin Event skipped', [positionId]);
     }
