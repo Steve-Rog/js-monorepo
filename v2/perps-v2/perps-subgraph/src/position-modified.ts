@@ -107,6 +107,31 @@ function createTradeEntityForNewPosition(
   return tradeEntity;
 }
 
+function handlePositionOpenUpdates(
+  event: PositionModifiedEvent,
+  synthetix: Synthetix,
+  trader: Trader,
+  positionId: string
+): void {
+  const tradeEntity = createTradeEntityForNewPosition(event, positionId);
+  tradeEntity.save();
+  synthetix.feesByPositionModifications = synthetix.feesByPositionModifications.plus(
+    event.params.fee.toBigDecimal()
+  );
+
+  const volume = event.params.tradeSize
+    .times(event.params.lastPrice)
+    .div(BigInt.fromI32(10).pow(18))
+    .abs()
+    .toBigDecimal();
+
+  synthetix.totalVolume = synthetix.totalVolume.plus(volume);
+  trader.totalVolume = trader.totalVolume.plus(volume);
+  trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
+  trader.margin = trader.margin.plus(event.params.margin.toBigDecimal());
+  trader.pnl = trader.pnl.plus(event.params.fee.times(BigInt.fromI32(-1)));
+}
+
 /**
  * Entrypoint
  */
@@ -121,24 +146,8 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
   if (!futuresPosition) {
     log.info('new position', [positionId]);
     futuresPosition = createFuturesPosition(event, positionId);
-    const tradeEntity = createTradeEntityForNewPosition(event, positionId);
-    // TODO, this is a bug we not handling liquidations here
-    synthetix.feesByPositionModifications = synthetix.feesByLiquidations.plus(
-      event.params.fee.toBigDecimal()
-    );
+    handlePositionOpenUpdates(event, synthetix, trader, positionId);
 
-    const volume = event.params.tradeSize
-      .times(event.params.lastPrice)
-      .div(BigInt.fromI32(10).pow(18))
-      .abs()
-      .toBigDecimal();
-
-    synthetix.totalVolume = synthetix.totalVolume.plus(volume);
-    trader.totalVolume = trader.totalVolume.plus(volume);
-    trader.feesPaidToSynthetix = trader.feesPaidToSynthetix.plus(event.params.fee.toBigDecimal());
-    trader.margin = trader.margin.plus(event.params.margin.toBigDecimal());
-    trader.pnl = trader.pnl.plus(event.params.fee.times(BigInt.fromI32(-1)));
-    tradeEntity.save();
     // else position is not new
   } else {
     // Position closed & not liquidated
