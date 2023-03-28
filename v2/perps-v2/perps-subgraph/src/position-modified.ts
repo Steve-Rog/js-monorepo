@@ -40,6 +40,9 @@ function getOrCreateSynthetix(): Synthetix {
   return synthetix;
 }
 
+/**
+ * Mutative functions
+ */
 function updateTrades(event: PositionModifiedEvent, synthetix: Synthetix, trader: Trader): void {
   if (trader.trades.length == 0) {
     synthetix.totalTraders = synthetix.totalTraders.plus(BigInt.fromI32(1));
@@ -49,6 +52,64 @@ function updateTrades(event: PositionModifiedEvent, synthetix: Synthetix, trader
   trader.trades = oldTrades;
 }
 
+function createFuturesPosition(event: PositionModifiedEvent, positionId: string): FuturesPosition {
+  let futuresPosition = new FuturesPosition(positionId);
+  futuresPosition.openTimestamp = event.block.timestamp;
+  futuresPosition.account = event.params.account;
+  futuresPosition.isOpen = true;
+  futuresPosition.isLiquidated = false;
+  futuresPosition.size = event.params.size;
+  futuresPosition.avgEntryPrice = event.params.lastPrice;
+  futuresPosition.feesPaidToSynthetix = event.params.fee;
+  futuresPosition.netTransfers = BigInt.fromI32(0);
+  futuresPosition.initialMargin = event.params.margin.plus(event.params.fee);
+  futuresPosition.margin = event.params.margin;
+  futuresPosition.pnl = event.params.fee.times(BigInt.fromI32(-1));
+  futuresPosition.entryPrice = event.params.lastPrice;
+  futuresPosition.lastPrice = event.params.lastPrice;
+  futuresPosition.trades = BigInt.fromI32(1);
+  futuresPosition.long = event.params.tradeSize.gt(BigInt.fromI32(0));
+  futuresPosition.market = event.address.toHex();
+  futuresPosition.fundingIndex = event.params.fundingIndex;
+  futuresPosition.leverage = event.params.size
+    .times(event.params.lastPrice)
+    .div(event.params.margin)
+    .abs();
+  futuresPosition.netFunding = BigInt.fromI32(0);
+  futuresPosition.txHash = event.transaction.hash.toHex();
+  futuresPosition.totalVolume = event.params.tradeSize
+    .times(event.params.lastPrice)
+    .div(BigInt.fromI32(10).pow(18))
+    .abs();
+  return futuresPosition;
+}
+
+function createTradeEntityForNewPosition(
+  event: PositionModifiedEvent,
+  positionId: string
+): FuturesTrade {
+  const tradeEntity = new FuturesTrade(
+    event.transaction.hash.toHex() + '-' + event.logIndex.toString()
+  );
+  tradeEntity.timestamp = event.block.timestamp;
+  tradeEntity.account = event.params.account;
+  tradeEntity.positionId = positionId;
+  tradeEntity.margin = event.params.margin.plus(event.params.fee);
+  tradeEntity.size = event.params.tradeSize;
+  tradeEntity.positionSize = event.params.size;
+  tradeEntity.market = event.address.toHex();
+  tradeEntity.price = event.params.lastPrice;
+  tradeEntity.pnl = event.params.fee.times(BigInt.fromI32(-1));
+  tradeEntity.feesPaidToSynthetix = event.params.fee;
+  tradeEntity.positionClosed = false;
+  tradeEntity.type = 'PositionOpened';
+  tradeEntity.txHash = event.transaction.hash.toHex();
+  return tradeEntity;
+}
+
+/**
+ * Entrypoint
+ */
 export function handlePositionModified(event: PositionModifiedEvent): void {
   const positionId = event.address.toHex() + '-' + event.params.id.toHex();
   let futuresPosition = FuturesPosition.load(positionId);
@@ -57,55 +118,11 @@ export function handlePositionModified(event: PositionModifiedEvent): void {
   updateTrades(event, synthetix, trader);
 
   // New position when var futuresPosition is undefined
-  // TODO @MF what happens when user just deposits margin, why we creating new position?, we need to filter out that when tradeSize != 0 then real trade
   if (!futuresPosition) {
     log.info('new position', [positionId]);
-    futuresPosition = new FuturesPosition(positionId);
-    futuresPosition.openTimestamp = event.block.timestamp;
-    futuresPosition.account = event.params.account;
-    futuresPosition.isOpen = true;
-    futuresPosition.isLiquidated = false;
-    futuresPosition.size = event.params.size;
-    futuresPosition.avgEntryPrice = event.params.lastPrice;
-    futuresPosition.feesPaidToSynthetix = event.params.fee;
-    futuresPosition.netTransfers = BigInt.fromI32(0);
-    futuresPosition.initialMargin = event.params.margin.plus(event.params.fee);
-    futuresPosition.margin = event.params.margin;
-    futuresPosition.pnl = event.params.fee.times(BigInt.fromI32(-1));
-    futuresPosition.entryPrice = event.params.lastPrice;
-    futuresPosition.lastPrice = event.params.lastPrice;
-    futuresPosition.trades = BigInt.fromI32(1);
-    futuresPosition.long = event.params.tradeSize.gt(BigInt.fromI32(0));
-    futuresPosition.market = event.address.toHex();
-    futuresPosition.fundingIndex = event.params.fundingIndex;
-    futuresPosition.leverage = event.params.size
-      .times(event.params.lastPrice)
-      .div(event.params.margin)
-      .abs();
-    futuresPosition.netFunding = BigInt.fromI32(0);
-    futuresPosition.txHash = event.transaction.hash.toHex();
-    futuresPosition.totalVolume = event.params.tradeSize
-      .times(event.params.lastPrice)
-      .div(BigInt.fromI32(10).pow(18))
-      .abs();
-
-    const tradeEntity = new FuturesTrade(
-      event.transaction.hash.toHex() + '-' + event.logIndex.toString()
-    );
-    tradeEntity.timestamp = event.block.timestamp;
-    tradeEntity.account = event.params.account;
-    tradeEntity.positionId = positionId;
-    tradeEntity.margin = event.params.margin.plus(event.params.fee);
-    tradeEntity.size = event.params.tradeSize;
-    tradeEntity.positionSize = event.params.size;
-    tradeEntity.market = event.address.toHex();
-    tradeEntity.price = event.params.lastPrice;
-    tradeEntity.pnl = event.params.fee.times(BigInt.fromI32(-1));
-    tradeEntity.feesPaidToSynthetix = event.params.fee;
-    tradeEntity.positionClosed = false;
-    tradeEntity.type = 'PositionOpened';
-    tradeEntity.txHash = event.transaction.hash.toHex();
-
+    futuresPosition = createFuturesPosition(event, positionId);
+    const tradeEntity = createTradeEntityForNewPosition(event, positionId);
+    // TODO, this is a bug we not handling liquidations here
     synthetix.feesByPositionModifications = synthetix.feesByLiquidations.plus(
       event.params.fee.toBigDecimal()
     );
